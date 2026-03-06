@@ -300,7 +300,11 @@ class nmethod : public CompiledMethod {
 #endif
           );
 
+  nmethod(const nmethod &nm);
+
   // helper methods
+  void* operator new(size_t size, int nmethod_size, CodeBlobType code_blob_type) throw ();
+
   void* operator new(size_t size, int nmethod_size, int comp_level) throw();
   // For method handle intrinsics: Try MethodNonProfiled, MethodProfiled and NonNMethod.
   // Attention: Only allow NonNMethod space for special nmethods which don't need to be
@@ -358,6 +362,11 @@ class nmethod : public CompiledMethod {
       _native_basic_lock_sp_offset(in_ByteSize(-1)),
       _is_unloading_state(0) {}
 
+  // Relocate the nmethod to the code heap identified by code_blob_type.
+  // Returns nullptr if the code heap does not have enough space, the
+  // nmethod is unrelocatable, or the nmethod is invalidated during relocation,
+  // otherwise the relocated nmethod. The original nmethod will be marked not entrant.
+  nmethod* relocate(CodeBlobType code_blob_type);
 
   static nmethod* new_native_nmethod(const methodHandle& method,
                                      int compile_id,
@@ -373,6 +382,8 @@ class nmethod : public CompiledMethod {
   // type info
   bool is_nmethod() const                         { return true; }
   bool is_osr_method() const                      { return _entry_bci != InvocationEntryBci; }
+
+  bool is_relocatable();
 
   // boundaries for different parts
   address consts_begin          () const          { return           header_begin() + _consts_offset        ; }
@@ -659,6 +670,7 @@ public:
   // Logging
   void log_identity(xmlStream* log) const;
   void log_new_nmethod() const;
+  void log_relocated_nmethod(nmethod* original) const;
   void log_state_change() const;
 
   // Prints block-level comments, including nmethod specific block labels:

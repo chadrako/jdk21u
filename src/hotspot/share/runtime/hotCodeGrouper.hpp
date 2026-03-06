@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, 2023, Oracle and/or its affiliates. All rights reserved.
+ * Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -22,26 +22,38 @@
  *
  */
 
-#include "precompiled.hpp"
-#include "code/codeBehaviours.hpp"
-#include "code/compiledMethod.hpp"
-#include "runtime/mutexLocker.hpp"
-#include "runtime/safepoint.hpp"
+#ifdef COMPILER2
+#ifndef SHARE_RUNTIME_HOTCODEGROUPER_HPP
+#define SHARE_RUNTIME_HOTCODEGROUPER_HPP
 
-CompiledICProtectionBehaviour* CompiledICProtectionBehaviour::_current = nullptr;
+#include "code/codeCache.hpp"
+#include "runtime/javaThread.hpp"
 
-bool DefaultICProtectionBehaviour::lock(CompiledMethod* method) {
-  if (is_safe(method)) {
-    return false;
-  }
-  CompiledIC_lock->lock_without_safepoint_check();
-  return true;
-}
+class ThreadSampler;
 
-void DefaultICProtectionBehaviour::unlock(CompiledMethod* method) {
-  CompiledIC_lock->unlock();
-}
+class HotCodeGrouper : public JavaThread {
+ private:
+  static bool _is_initialized;
 
-bool DefaultICProtectionBehaviour::is_safe(CompiledMethod* method) {
-  return SafepointSynchronize::is_at_safepoint() || CompiledIC_lock->owned_by_self() || (CompiledMethod_lock->owned_by_self() && method->is_not_installed());
-}
+  static int _new_c2_nmethods_count;
+  static int _total_c2_nmethods_count;
+
+  static CodeHeap* hot_code_heap;
+
+  HotCodeGrouper();
+
+  static void do_grouping(ThreadSampler& sampler);
+
+ public:
+
+  static void initialize();
+  static void thread_entry(JavaThread* thread, TRAPS);
+  static void unregister_nmethod(nmethod* nm);
+  static void register_nmethod(nmethod* nm);
+
+  static bool hot_heap_has_space(size_t size);
+  static bool is_nmethod_count_steady();
+};
+
+#endif // SHARE_RUNTIME_HOTCODEGROUPER_HPP
+#endif // COMPILER2

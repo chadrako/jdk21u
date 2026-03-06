@@ -111,6 +111,7 @@ class CodeCache : AllStatic {
 
   // CodeHeap management
   static void initialize_heaps();                             // Initializes the CodeHeaps
+  static void initialize_standard_heaps_and_hot_code_heap();
   // Check the code heap sizes set by the user via command line
   static void check_heap_sizes(size_t non_nmethod_size, size_t profiled_size, size_t non_profiled_size, size_t cache_size, bool all_set);
   // Creates a new heap with the given name and size, containing CodeBlobs of the given type
@@ -119,7 +120,9 @@ class CodeCache : AllStatic {
   static CodeHeap* get_code_heap(const void* cb);             // Returns the CodeHeap for the given CodeBlob
   static CodeHeap* get_code_heap(CodeBlobType code_blob_type);         // Returns the CodeHeap for the given CodeBlobType
   // Returns the name of the VM option to set the size of the corresponding CodeHeap
+ public:
   static const char* get_code_heap_flag_name(CodeBlobType code_blob_type);
+ private:
   static ReservedCodeSpace reserve_heap_memory(size_t size, size_t rs_ps); // Reserves one continuous chunk of memory for the CodeHeaps
 
   // Iteration
@@ -261,17 +264,17 @@ class CodeCache : AllStatic {
   static bool heap_available(CodeBlobType code_blob_type);
 
   // Returns the CodeBlobType for the given CompiledMethod
-  static CodeBlobType get_code_blob_type(CompiledMethod* cm) {
+  static CodeBlobType get_code_blob_type(const CompiledMethod* cm) {
     return get_code_heap(cm)->code_blob_type();
   }
 
   static bool code_blob_type_accepts_compiled(CodeBlobType code_blob_type) {
-    bool result = code_blob_type == CodeBlobType::All || code_blob_type <= CodeBlobType::MethodProfiled;
+    bool result = code_blob_type == CodeBlobType::All || code_blob_type <= CodeBlobType::MethodHot;
     return result;
   }
 
   static bool code_blob_type_accepts_nmethod(CodeBlobType type) {
-    return type == CodeBlobType::All || type <= CodeBlobType::MethodProfiled;
+    return type == CodeBlobType::All || type <= CodeBlobType::MethodHot;
   }
 
   static bool code_blob_type_accepts_allocable(CodeBlobType type) {

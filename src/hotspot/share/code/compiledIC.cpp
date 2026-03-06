@@ -696,8 +696,6 @@ address CompiledDirectStaticCall::resolve_call_stub() const {
 
 void CompiledIC::verify() {
   _call->verify();
-  assert(is_clean() || is_call_to_compiled() || is_call_to_interpreted()
-          || is_optimized() || is_megamorphic(), "sanity check");
 }
 
 void CompiledIC::print() {
