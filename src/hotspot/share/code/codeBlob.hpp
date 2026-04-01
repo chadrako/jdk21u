@@ -44,9 +44,10 @@ class OopMapSet;
 enum class CodeBlobType {
   MethodNonProfiled   = 0,    // Execution level 1 and 4 (non-profiled) nmethods (including native nmethods)
   MethodProfiled      = 1,    // Execution level 2 and 3 (profiled) nmethods
-  NonNMethod          = 2,    // Non-nmethods like Buffers, Adapters and Runtime Stubs
-  All                 = 3,    // All types (No code cache segmentation)
-  NumTypes            = 4     // Number of CodeBlobTypes
+  MethodHot           = 2,    // Nmethods predicted to be always hot
+  NonNMethod          = 3,    // Non-nmethods like Buffers, Adapters and Runtime Stubs
+  All                 = 4,    // All types (No code cache segmentation)
+  NumTypes            = 5     // Number of CodeBlobTypes
 };
 
 // CodeBlob - superclass for all entries in the CodeCache.
@@ -300,6 +301,27 @@ public:
     _relocation_size(relocation_size),
     _content_offset(CodeBlob::align_code_offset(_header_size + _relocation_size)),
     _code_offset(_content_offset),
+    _data_offset(data_offset)
+  {
+    assert(is_aligned(_relocation_size, oopSize), "unaligned size");
+
+    _code_begin = (address) start + _code_offset;
+    _code_end = (address) start + _data_offset;
+
+    _content_begin = (address) start + _content_offset;
+    _content_end = (address) start + _data_offset;
+
+    _data_end = (address) start + _size;
+    _relocation_begin = (address) start + _header_size;
+    _relocation_end = _relocation_begin + _relocation_size;
+  }
+
+  CodeBlobLayout(const address start, int size, int header_size, int relocation_size, int _content_offset, int _code_offset, int data_offset) :
+    _size(size),
+    _header_size(header_size),
+    _relocation_size(relocation_size),
+    _content_offset(_content_offset),
+    _code_offset(_code_offset),
     _data_offset(data_offset)
   {
     assert(is_aligned(_relocation_size, oopSize), "unaligned size");

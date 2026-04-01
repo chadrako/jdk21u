@@ -108,8 +108,16 @@ Stub* StubQueue::stub_containing(address pc) const {
 
 
 Stub* StubQueue::request_committed(int code_size) {
+  bool aquire_lock = false;
+  if (_mutex != nullptr && !_mutex->owned_by_self()) {
+    aquire_lock = true;
+    _mutex->lock_without_safepoint_check();
+  }
+
   Stub* s = request(code_size);
   if (s != nullptr) commit(code_size);
+
+  if (_mutex != nullptr && aquire_lock) _mutex->unlock();
   return s;
 }
 
@@ -122,7 +130,6 @@ int StubQueue::compute_stub_size(Stub* stub, int code_size) {
 
 Stub* StubQueue::request(int requested_code_size) {
   assert(requested_code_size > 0, "requested_code_size must be > 0");
-  if (_mutex != nullptr) _mutex->lock_without_safepoint_check();
   Stub* s = current_stub();
   int requested_size = compute_stub_size(s, requested_code_size);
   if (requested_size <= available_space()) {
@@ -153,7 +160,6 @@ Stub* StubQueue::request(int requested_code_size) {
     return s;
   }
   // Not enough space left
-  if (_mutex != nullptr) _mutex->unlock();
   return nullptr;
 }
 
@@ -166,7 +172,6 @@ void StubQueue::commit(int committed_code_size) {
   stub_initialize(s, committed_size);
   _queue_end += committed_size;
   _number_of_stubs++;
-  if (_mutex != nullptr) _mutex->unlock();
   debug_only(stub_verify(s);)
 }
 

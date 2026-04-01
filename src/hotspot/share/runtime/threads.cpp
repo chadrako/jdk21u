@@ -62,6 +62,7 @@
 #include "runtime/fieldDescriptor.inline.hpp"
 #include "runtime/flags/jvmFlagLimit.hpp"
 #include "runtime/handles.inline.hpp"
+#include "runtime/hotCodeCollector.hpp"
 #include "runtime/globals.hpp"
 #include "runtime/interfaceSupport.inline.hpp"
 #include "runtime/java.hpp"
@@ -736,6 +737,12 @@ jint Threads::create_vm(JavaVMInitArgs* args, bool* canTryAgain) {
   if (StringDedup::is_enabled()) {
     StringDedup::start();
   }
+
+#ifdef COMPILER2
+  if (HotCodeHeap) {
+    HotCodeCollector::initialize();
+  }
+#endif // COMPILER2
 
   // Pre-initialize some JSR292 core classes to avoid deadlock during class loading.
   // It is done after compilers are initialized, because otherwise compilations of

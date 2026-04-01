@@ -104,7 +104,7 @@ public:
   }
 
   virtual bool is_safe(CompiledMethod* method) {
-    if (SafepointSynchronize::is_at_safepoint()) {
+    if (SafepointSynchronize::is_at_safepoint() || (CompiledMethod_lock->owned_by_self() && method->is_not_installed())) {
       return true;
     }
 

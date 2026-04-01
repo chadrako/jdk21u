@@ -66,6 +66,9 @@
 #include "runtime/flags/flagSetting.hpp"
 #include "runtime/frame.inline.hpp"
 #include "runtime/handles.inline.hpp"
+#ifdef COMPILER2
+#include "runtime/hotCodeCollector.hpp"
+#endif // COMPILER2
 #include "runtime/jniHandles.inline.hpp"
 #include "runtime/orderAccess.hpp"
 #include "runtime/os.hpp"
@@ -749,6 +752,302 @@ nmethod::nmethod(
   }
 }
 
+nmethod::nmethod(const nmethod &nm)
+  : CompiledMethod(nm.method(), "nmethod", nm.compiler_type(),
+                   CodeBlobLayout((address)this, nm.size(), nm.header_size(), nm.relocation_size(), nm.content_offset(), nm.code_offset(), nm.data_offset()),
+                   nm.frame_complete_offset(), nm.frame_size(),
+                   nullptr, nm._caller_must_gc_arguments, nm._is_compiled),
+  _native_receiver_sp_offset(in_ByteSize(-1)),
+  _native_basic_lock_sp_offset(in_ByteSize(-1)),
+  _is_unloading_state(0)
+{
+
+  if (nm._oop_maps != nullptr) {
+    _oop_maps                   = nm._oop_maps->clone();
+  } else {
+    _oop_maps                   = nullptr;
+  }
+
+  _size                         = nm._size;
+  _data_offset                  = nm._data_offset;
+  _frame_size                   = nm._frame_size;
+
+  S390_ONLY( _ctable_offset     = nm._ctable_offset; )
+
+  _header_size                  = nm._header_size;
+  _frame_complete_offset        = nm._frame_complete_offset;
+
+  _caller_must_gc_arguments     = nm._caller_must_gc_arguments;
+
+#ifndef PRODUCT
+  _asm_remarks.share(nm._asm_remarks);
+  _dbg_strings.share(nm._dbg_strings);
+#endif
+
+  _deoptimization_generation    = 0;
+  _gc_epoch                     = CodeCache::gc_epoch();
+  _method                       = nm._method;
+  _osr_link                     = nullptr;
+
+  _exception_cache              = nullptr;
+  _gc_data                      = nullptr;
+  _oops_do_mark_nmethods        = nullptr;
+  _oops_do_mark_link            = nullptr;
+
+  if (nm._osr_entry_point != nullptr) {
+    _osr_entry_point            = (nm._osr_entry_point - (address) &nm) + (address) this;
+  } else {
+    _osr_entry_point            = nullptr;
+  }
+
+  _entry_bci                    = nm._entry_bci;
+
+  _skipped_instructions_size    = nm._skipped_instructions_size;
+  _stub_offset                  = nm._stub_offset;
+  _exception_offset             = nm._exception_offset;
+
+  if (nm._deopt_handler_begin == nullptr) {
+    _deopt_handler_begin = nullptr;
+  } else {
+    _deopt_handler_begin  = (address)this + (nm._deopt_handler_begin - (address)&nm);
+  }
+
+  if (nm._deopt_mh_handler_begin == nullptr) {
+    _deopt_mh_handler_begin = nullptr;
+  } else {
+    _deopt_mh_handler_begin = (address)this + (nm._deopt_mh_handler_begin - (address)&nm);
+  }
+
+  _unwind_handler_offset        = nm._unwind_handler_offset;
+  _num_stack_arg_slots          = nm._num_stack_arg_slots;
+
+  _consts_offset                = nm._consts_offset;
+  _oops_offset                  = nm._oops_offset;
+  _metadata_offset              = nm._metadata_offset;
+  _dependencies_offset          = nm._dependencies_offset;
+
+  _nul_chk_table_offset         = nm._nul_chk_table_offset;
+  _handler_table_offset         = nm._handler_table_offset;
+  _scopes_pcs_offset            = nm._scopes_pcs_offset;
+  _scopes_data_offset           = nm._scopes_data_offset;
+#if INCLUDE_JVMCI
+  _speculations_offset          = nm._speculations_offset;
+  _jvmci_data_offset            = nm._jvmci_data_offset;
+  _nmethod_end_offset           = nm._nmethod_end_offset;
+#else
+  _nmethod_end_offset           = nm._nmethod_end_offset;
+#endif
+
+  _orig_pc_offset               = nm._orig_pc_offset;
+  _compile_id                   = nm._compile_id;
+
+  if (nm._entry_point == nullptr) {
+    _entry_point = nullptr;
+  } else {
+    _entry_point                  = (nm._entry_point - (address) &nm) + (address) this;
+  }
+
+  if (nm._verified_entry_point == nullptr) {
+    _verified_entry_point = nullptr;
+  } else {
+    _verified_entry_point         = (nm._verified_entry_point - (address) &nm) + (address) this;
+  }
+
+  _comp_level                   = nm._comp_level;
+  _is_unloading_state           = nm._is_unloading_state;
+  _state                        = not_installed;
+
+  _has_unsafe_access            = nm._has_unsafe_access;
+  _has_method_handle_invokes    = nm._has_method_handle_invokes;
+  _has_wide_vectors             = nm._has_wide_vectors;
+  _has_monitors                 = nm._has_monitors;
+  _has_flushed_dependencies     = nm._has_flushed_dependencies;
+  _is_unlinked                  = nm._is_unlinked;
+  _load_reported                = nm._load_reported;
+
+  _deoptimization_status        = nm._deoptimization_status;
+
+  if (nm._scopes_data_begin == nullptr) {
+    _scopes_data_begin = nullptr;
+  } else {
+    _scopes_data_begin            = (address) this + (nm._scopes_data_begin - (address)&nm);
+  }
+
+  _pc_desc_container.reset_to(scopes_pcs_begin());
+
+  set_ctable_begin(header_begin() + _consts_offset);
+
+  // Copy nmethod contents excluding header
+  memcpy((address)relocation_begin(), (address)nm.relocation_begin(), nm.data_end() - (address)nm.relocation_begin());
+
+  // Fix relocation
+  RelocIterator iter(this);
+  CodeBuffer src(&nm);
+  CodeBuffer dst(this);
+  while (iter.next()) {
+#ifdef USE_TRAMPOLINE_STUB_FIX_OWNER
+    // After an nmethod is moved, some direct call sites may end up out of range.
+    // CallRelocation::fix_relocation_after_move() assumes the target is always
+    // reachable and does not check branch range. Calling it without range checks
+    // could cause us to write an offset too large for the instruction.
+    //
+    // If a call site has a trampoline, we skip the normal call relocation. The
+    // associated trampoline_stub_Relocation will handle the call and the
+    // trampoline, including range checks and updating the branch as needed.
+    //
+    // If no trampoline exists, we can assume the call target is always
+    // reachable and therefore within direct branch range, so calling
+    // CallRelocation::fix_relocation_after_move() is safe.
+    if (iter.reloc()->is_call()) {
+      address trampoline = trampoline_stub_Relocation::get_trampoline_for(iter.reloc()->addr(), this);
+      if (trampoline != nullptr) {
+        continue;
+      }
+    }
+#endif
+
+    iter.reloc()->fix_relocation_after_move(&src, &dst);
+  }
+
+  {
+    // Clear inline caches and use set_to_clean(false) for virtual calls
+    // to avoid creating unnecessary transition stubs.
+    MutexLocker ml(CompiledMethod_lock, Mutex::_no_safepoint_check_flag);
+    RelocIterator iter(this);
+    while (iter.next()) {
+      if (iter.type() == relocInfo::virtual_call_type) {
+        CompiledIC* ic = CompiledIC_at(&iter);
+        ic->set_to_clean(false);
+      } else {
+        iter.reloc()->clear_inline_cache();
+      }
+    }
+  }
+
+  // post_init()
+  clear_unloading_state();
+
+  Universe::heap()->register_nmethod(this);
+
+  debug_only(Universe::heap()->verify_nmethod(this));
+
+  CodeCache::commit(this);
+
+  finalize_relocations();
+}
+
+nmethod* nmethod::relocate(CodeBlobType code_blob_type) {
+  // Locks required to be held by caller to ensure the nmethod
+  // is not modified or purged from code cache during relocation
+  assert_lock_strong(CodeCache_lock);
+  assert_lock_strong(Compile_lock);
+  assert(CompiledICLocker::is_safe(this), "mt unsafe call");
+
+  if (!is_relocatable()) {
+    return nullptr;
+  }
+
+  run_nmethod_entry_barrier();
+
+  // Clean IC callsites on the original before copying to avoid copying
+  // IC stubs in the transition state
+  clear_ic_callsites();
+
+  nmethod* nm_copy = new (size(), code_blob_type) nmethod(*this);
+
+  if (nm_copy == nullptr) {
+    return nullptr;
+  }
+
+  // To make dependency checking during class loading fast, record
+  // the nmethod dependencies in the classes it is dependent on.
+  // This allows the dependency checking code to simply walk the
+  // class hierarchy above the loaded class, checking only nmethods
+  // which are dependent on those classes.  The slow way is to
+  // check every nmethod for dependencies which makes it linear in
+  // the number of methods compiled.  For applications with a lot
+  // classes the slow way is too slow.
+  for (Dependencies::DepStream deps(nm_copy); deps.next(); ) {
+    if (deps.type() == Dependencies::call_site_target_value) {
+      // CallSite dependencies are managed on per-CallSite instance basis.
+      oop call_site = deps.argument_oop(0);
+      MethodHandles::add_dependent_nmethod(call_site, nm_copy);
+    } else {
+      InstanceKlass* ik = deps.context_type();
+      if (ik == nullptr) {
+        continue;  // ignore things like evol_method
+      }
+      // record this nmethod as dependent on this klass
+      ik->add_dependent_nmethod(nm_copy);
+    }
+  }
+
+  MutexLocker ml_CompiledMethod_lock(CompiledMethod_lock, Mutex::_no_safepoint_check_flag);
+
+  // Verify the nm we copied from is still valid
+  if (!is_marked_for_deoptimization() && is_in_use()) {
+    assert(method() != nullptr && method()->code() == this, "should be if is in use");
+
+    // Attempt to start using the copy
+    if (nm_copy->make_in_use()) {
+      ICache::invalidate_range(nm_copy->code_begin(), nm_copy->code_size());
+
+      methodHandle mh(Thread::current(), nm_copy->method());
+      nm_copy->method()->set_code(mh, nm_copy);
+
+      make_not_used();
+
+      nm_copy->post_compiled_method_load_event();
+
+      nm_copy->log_relocated_nmethod(this);
+
+      return nm_copy;
+    }
+  }
+
+  nm_copy->make_not_used();
+
+  return nullptr;
+}
+
+bool nmethod::is_relocatable() {
+  if (!is_java_method()) {
+    return false;
+  }
+
+  if (!is_in_use()) {
+    return false;
+  }
+
+  if (is_osr_method()) {
+    return false;
+  }
+
+  if (is_marked_for_deoptimization()) {
+    return false;
+  }
+
+#if INCLUDE_JVMCI
+  if (jvmci_nmethod_data() != nullptr && jvmci_nmethod_data()->has_mirror()) {
+    return false;
+  }
+#endif
+
+  if (is_unloading()) {
+    return false;
+  }
+
+  if (has_evol_metadata()) {
+    return false;
+  }
+
+  return true;
+}
+
+void* nmethod::operator new(size_t size, int nmethod_size, CodeBlobType code_blob_type) throw () {
+  return CodeCache::allocate(nmethod_size, code_blob_type);
+}
+
 void* nmethod::operator new(size_t size, int nmethod_size, int comp_level) throw () {
   return CodeCache::allocate(nmethod_size, CodeCache::get_code_blob_type(comp_level));
 }
@@ -890,6 +1189,11 @@ nmethod::nmethod(
 #endif
 
     Universe::heap()->register_nmethod(this);
+
+#ifdef COMPILER2
+    HotCodeCollector::register_nmethod(this);
+#endif // COMPILER2
+
     debug_only(Universe::heap()->verify_nmethod(this));
 
     CodeCache::commit(this);
@@ -951,6 +1255,39 @@ void nmethod::log_new_nmethod() const {
     log_identity(xtty);
     xtty->print(" entry='" INTPTR_FORMAT "' size='%d'", p2i(code_begin()), size());
     xtty->print(" address='" INTPTR_FORMAT "'", p2i(this));
+
+    LOG_OFFSET(xtty, relocation);
+    LOG_OFFSET(xtty, consts);
+    LOG_OFFSET(xtty, insts);
+    LOG_OFFSET(xtty, stub);
+    LOG_OFFSET(xtty, scopes_data);
+    LOG_OFFSET(xtty, scopes_pcs);
+    LOG_OFFSET(xtty, dependencies);
+    LOG_OFFSET(xtty, handler_table);
+    LOG_OFFSET(xtty, nul_chk_table);
+    LOG_OFFSET(xtty, oops);
+    LOG_OFFSET(xtty, metadata);
+
+    xtty->method(method());
+    xtty->stamp();
+    xtty->end_elem();
+  }
+}
+
+void nmethod::log_relocated_nmethod(nmethod* original) const {
+  if (LogCompilation && xtty != nullptr) {
+    ttyLocker ttyl;
+    xtty->begin_elem("relocated nmethod");
+    log_identity(xtty);
+    xtty->print(" entry='" INTPTR_FORMAT "' size='%d'", p2i(code_begin()), size());
+
+    const char* original_code_heap_name = CodeCache::get_code_heap_name(CodeCache::get_code_blob_type(original));
+    xtty->print(" original_address='" INTPTR_FORMAT "'", p2i(original));
+    xtty->print(" original_code_heap='%s'", original_code_heap_name);
+
+    const char* new_code_heap_name = CodeCache::get_code_heap_name(CodeCache::get_code_blob_type(this));
+    xtty->print(" new_address='" INTPTR_FORMAT "'", p2i(this));
+    xtty->print(" new_code_heap='%s'", new_code_heap_name);
 
     LOG_OFFSET(xtty, relocation);
     LOG_OFFSET(xtty, consts);
@@ -1471,6 +1808,10 @@ void nmethod::purge(bool free_code_cache_data, bool unregister_nmethod) {
   if (unregister_nmethod) {
     Universe::heap()->unregister_nmethod(this);
   }
+
+#ifdef COMPILER2
+  HotCodeCollector::unregister_nmethod(this);
+#endif // COMPILER2
 
   CodeCache::unregister_old_nmethod(this);
 

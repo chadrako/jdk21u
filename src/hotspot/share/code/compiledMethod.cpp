@@ -424,7 +424,7 @@ Method* CompiledMethod::attached_method_before_pc(address pc) {
 }
 
 void CompiledMethod::clear_inline_caches() {
-  assert(SafepointSynchronize::is_at_safepoint(), "clearing of IC's only allowed at safepoint");
+  assert(SafepointSynchronize::is_at_safepoint() || (CompiledMethod_lock->owned_by_self() && is_not_installed()), "clearing of IC's only allowed at safepoint or when not installed");
   RelocIterator iter(this);
   while (iter.next()) {
     iter.reloc()->clear_inline_cache();
