@@ -910,8 +910,18 @@ nmethod::nmethod(const nmethod &nm)
   }
 
   {
+    // Clear inline caches and use set_to_clean(false) for virtual calls
+    // to avoid creating unnecessary transition stubs.
     MutexLocker ml(CompiledMethod_lock, Mutex::_no_safepoint_check_flag);
-    clear_inline_caches();
+    RelocIterator iter(this);
+    while (iter.next()) {
+      if (iter.type() == relocInfo::virtual_call_type) {
+        CompiledIC* ic = CompiledIC_at(&iter);
+        ic->set_to_clean(false);
+      } else {
+        iter.reloc()->clear_inline_cache();
+      }
+    }
   }
 
   // post_init()
@@ -938,6 +948,11 @@ nmethod* nmethod::relocate(CodeBlobType code_blob_type) {
   }
 
   run_nmethod_entry_barrier();
+
+  // Clean IC callsites on the original before copying to avoid copying
+  // IC stubs in the transition state
+  clear_ic_callsites();
+
   nmethod* nm_copy = new (size(), code_blob_type) nmethod(*this);
 
   if (nm_copy == nullptr) {
