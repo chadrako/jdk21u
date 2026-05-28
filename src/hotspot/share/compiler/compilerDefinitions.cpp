@@ -355,6 +355,10 @@ void CompilerConfig::set_compilation_policy_flags() {
     if (HotCodeMinSamplingMs > HotCodeMaxSamplingMs) {
       vm_exit_during_initialization("HotCodeMinSamplingMs cannot be larger than HotCodeMaxSamplingMs");
     }
+
+    if (HotCodeHeapSize == 0) {
+      vm_exit_during_initialization("HotCodeHeapSize cannot be zero when HotCodeHeap is enabled");
+    }
   } else if (HotCodeHeapSize > 0) {
     vm_exit_during_initialization("HotCodeHeapSize requires HotCodeHeap enabled");
   }
