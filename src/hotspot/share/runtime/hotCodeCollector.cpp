@@ -60,6 +60,11 @@ void HotCodeCollector::initialize() {
 }
 
 bool HotCodeCollector::is_nmethod_count_steady() {
+  if (HotCodeStablePercent < 0) {
+    log_info(hotcode)("HotCodeStablePercent is less than zero, stable check disabled");
+    return true;
+  }
+
   MutexLocker ml_CodeCache_lock(CodeCache_lock, Mutex::_no_safepoint_check_flag);
 
   if (_total_c2_nmethods_count <= 0) {
@@ -92,7 +97,9 @@ void HotCodeCollector::thread_entry(JavaThread* thread, TRAPS) {
       ThreadSampler sampler;
       uint64_t start_time = os::javaTimeMillis();
       while (os::javaTimeMillis() - start_time <= HotCodeSampleSeconds * 1000) {
-        sampler.sample_all_java_threads();
+        if (!sampler.sample_all_java_threads()) {
+          break;
+        }
         thread->sleep(rand_sampling_period_ms());
       }
 

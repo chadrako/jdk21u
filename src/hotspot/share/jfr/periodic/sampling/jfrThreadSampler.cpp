@@ -34,8 +34,12 @@
 #include "jfr/recorder/storage/jfrBuffer.hpp"
 #include "jfr/support/jfrThreadLocal.hpp"
 #include "jfr/utilities/jfrTime.hpp"
+#include "jfr/utilities/jfrTryLock.hpp"
 #include "jfrfiles/jfrEventClasses.hpp"
 #include "logging/log.hpp"
+#ifdef COMPILER2
+#include "opto/c2_globals.hpp"
+#endif
 #include "runtime/atomic.hpp"
 #include "runtime/frame.inline.hpp"
 #include "runtime/globals.hpp"
@@ -207,6 +211,15 @@ void OSThreadSampler::protected_task(const SuspendedThreadTaskContext& context) 
 }
 
 void OSThreadSampler::take_sample() {
+#ifdef COMPILER2
+  if (HotCodeHeap) {
+    JfrMutexTryLock try_lock(SuspendedThreadTask_lock);
+    if (try_lock.acquired()) {
+      run();
+    }
+    return;
+  }
+#endif
   run();
 }
 

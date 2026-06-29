@@ -5957,6 +5957,11 @@ void get_thread_handle_for_extended_context(HANDLE* h,
 // Thread sampling implementation
 //
 void SuspendedThreadTask::internal_do_task() {
+#if INCLUDE_JFR
+  assert(NOT_COMPILER2(true) COMPILER2_PRESENT(!HotCodeHeap) ||
+         SuspendedThreadTask_lock->owned_by_self(),
+         "suspend/resume must be serialized when HotCodeHeap is enabled");
+#endif
   CONTEXT    ctxt;
   HANDLE     h = nullptr;
 

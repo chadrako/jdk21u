@@ -121,6 +121,7 @@ Mutex*   JfrStacktrace_lock           = nullptr;
 Monitor* JfrMsg_lock                  = nullptr;
 Mutex*   JfrBuffer_lock               = nullptr;
 Monitor* JfrThreadSampler_lock        = nullptr;
+Mutex*   SuspendedThreadTask_lock     = nullptr;
 #endif
 
 #ifndef SUPPORTS_NATIVE_CX8
@@ -294,6 +295,7 @@ void mutex_init() {
   MUTEX_DEFN(JfrMsg_lock                     , PaddedMonitor, event);
   MUTEX_DEFN(JfrStacktrace_lock              , PaddedMutex  , event);
   MUTEX_DEFN(JfrThreadSampler_lock           , PaddedMonitor, nosafepoint);
+  MUTEX_DEFN(SuspendedThreadTask_lock        , PaddedMutex  , nosafepoint);
 #endif
 
 #ifndef SUPPORTS_NATIVE_CX8
